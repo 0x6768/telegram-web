@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       domain:
-        description: '新域名 (替换 web.telegram.org)'
+        description: '新域名'
         required: true
         type: string
 
@@ -16,26 +16,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Update files
+      - name: Replace domain in Utils.ts
         run: |
-          # 1. 修改 Utils.ts
-          sed -i "s|zws\([0-9]\)\(-1\)\{0,1\}\.web\.telegram\.org|zws\1\2_${{ inputs.domain }}|g" src/lib/gramjs/Utils.ts
+          DOMAIN="${{ inputs.domain }}"
+          FILE="src/lib/gramjs/Utils.ts"
           
-          # 2. 添加白名单
-          awk -v domain="\"${{ inputs.domain }}\"," '
+          # 正确的正则：匹配整个模板字符串
+          # 注意：需要转义 $ 和 {
+          sed -i "s|\`zws\([0-9]\)\${downloadDC ? '-1' : ''}\.web\.telegram\.org\`|\`zws\1\${downloadDC ? '-1' : ''}_$DOMAIN\`|g" "$FILE"
+          
+          echo "✅ 已更新模板字符串"
+          
+      - name: Add to whitelist
+        run: |
+          DOMAIN="${{ inputs.domain }}"
+          FILE="src/limits.ts"
+          
+          # 在 whitelistedDomains 数组中添加
+          awk -v domain="\"$DOMAIN\"," '
           /whitelistedDomains: \[/ {in_array=1}
           in_array && /\]/ && !added {print "    " domain; added=1}
           {print $0}
-          ' src/limits.ts > tmp && mv tmp src/limits.ts
-          
-          # 3. 修改 config.ts
-          [ -f src/config.ts ] && sed -i "s|web\.telegram\.org|${{ inputs.domain }}|g" src/config.ts
+          ' "$FILE" > tmp && mv tmp "$FILE"
           
       - name: Commit and push
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add src/
-          # 有修改就提交，没修改就跳过
-          git diff --cached --quiet || git commit -m "update domain to ${{ inputs.domain }}"
+          git commit -m "update domain to ${{ inputs.domain }}" 2>/dev/null || true
           git push
