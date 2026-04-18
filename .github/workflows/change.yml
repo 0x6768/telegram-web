@@ -1,15 +1,10 @@
-name: Update Telegram Domains
+name: Update Web Telegram Domain
 on:
   workflow_dispatch:
     inputs:
-      custom_domain:
-        description: 'Your custom domain (e.g., tg.example.com)'
+      new_domain:
+        description: '新域名 (替换 web.telegram.org)'
         required: true
-        type: string
-      commit_message:
-        description: 'Commit message'
-        required: false
-        default: 'chore: update telegram domains'
         type: string
 
 permissions:
@@ -21,144 +16,81 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          
+        
       - name: Configure Git
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
           
-      - name: Debug - Show original content
+      - name: 1. 修改 src/lib/gramjs/Utils.ts
         run: |
-          echo "=== Original Utils.ts content ==="
-          grep -n "zws.*web.telegram.org" src/lib/gramjs/Utils.ts || echo "Not found"
-          echo ""
-          echo "=== Original config.ts content (if exists) ==="
-          [ -f src/config.ts ] && grep -n "web.telegram.org\|telegram.org" src/config.ts | head -5 || echo "File not found"
-
-      - name: 1. Update src/lib/gramjs/Utils.ts (特殊处理模板字符串)
+          NEW_DOMAIN="${{ inputs.new_domain }}"
+          
+          echo "正在修改 Utils.ts..."
+          echo "web.telegram.org → $NEW_DOMAIN"
+          
+          # 直接修改，不需要备份
+          sed -i "s|zws\([0-9]\)\(-1\)\{0,1\}\.web\.telegram\.org|zws\1\2_$NEW_DOMAIN|g" src/lib/gramjs/Utils.ts
+          
+          echo "✅ 修改完成"
+          
+      - name: 2. 在 src/limits.ts 中添加白名单
         run: |
-          DOMAIN="${{ inputs.custom_domain }}"
-          FILE="src/lib/gramjs/Utils.ts"
+          NEW_DOMAIN="${{ inputs.new_domain }}"
           
-          if [ ! -f "$FILE" ]; then
-            echo "Error: $FILE not found"
-            exit 1
-          fi
+          echo "正在添加 $NEW_DOMAIN 到白名单..."
           
-          # 备份
-          cp "$FILE" "${FILE}.bak"
+          # 在 whitelistedDomains 数组末尾添加
+          awk -v domain="\"$NEW_DOMAIN\"," '
+          /whitelistedDomains: \[/ {
+            print $0
+            in_array = 1
+            next
+          }
+          in_array && /\]/ && !added {
+            print "    " domain
+            print $0
+            added = 1
+            in_array = 0
+            next
+          }
+          { print $0 }
+          ' src/limits.ts > tmp_file && mv tmp_file src/limits.ts
           
-          # 特殊处理：zwsX${downloadDC ? '-1' : ''}.web.telegram.org
-          # 替换为：zwsX${downloadDC ? '-1' : ''}_$DOMAIN
-          sed -i "s|zws\([0-9]\)\(-1\)\{0,1\}\.web\.telegram\.org|zws\1\2_$DOMAIN|g" "$FILE"
+          echo "✅ 已添加到白名单"
           
-          # 验证替换结果
-          echo "✓ Updated $FILE"
-          echo "Changes preview:"
-          grep -n "zws.*_" "$FILE" | head -10
-          
-          # 检查是否有未替换的
-          UNREPLACED=$(grep -c "web.telegram.org" "$FILE" || true)
-          if [ "$UNREPLACED" -gt 0 ]; then
-            echo "⚠ Still $UNREPLACED occurrences of web.telegram.org remaining"
-            grep -n "web.telegram.org" "$FILE"
-          fi
-
-      - name: 2. Update src/config.ts (普通替换)
+      - name: 3. 修改 src/config.ts (如果存在)
         run: |
-          DOMAIN="${{ inputs.custom_domain }}"
-          FILE="src/config.ts"
-          
-          if [ ! -f "$FILE" ]; then
-            echo "⚠ $FILE not found, skipping"
+          if [ ! -f "src/config.ts" ]; then
+            echo "⚠ config.ts 不存在，跳过"
             exit 0
           fi
           
-          # 备份
-          cp "$FILE" "${FILE}.bak"
+          sed -i "s|web\.telegram\.org|${{ inputs.new_domain }}|g" src/config.ts
+          echo "✅ 已修改 config.ts"
           
-          # 替换所有相关域名
-          sed -i "s|web\.telegram\.org|$DOMAIN|g" "$FILE"
-          sed -i "s|telegram\.org|$DOMAIN|g" "$FILE"
-          sed -i "s|telegram\.dog|$DOMAIN|g" "$FILE"
-          sed -i "s|telegram\.me|$DOMAIN|g" "$FILE"
-          sed -i "s|t\.me|$DOMAIN|g" "$FILE"
-          
-          echo "✓ Updated $FILE"
-          echo "Changes:"
-          grep -n "telegram\|$DOMAIN" "$FILE" | head -5 || true
-
-      - name: 3. Update src/limits.ts (添加白名单)
+      - name: 4. 显示修改摘要
         run: |
-          DOMAIN="${{ inputs.custom_domain }}"
-          FILE="src/limits.ts"
-          
-          if [ ! -f "$FILE" ]; then
-            echo "Error: $FILE not found"
-            exit 1
-          fi
-          
-          # 备份
-          cp "$FILE" "${FILE}.bak"
-          
-          # 在 whitelistedDomains 数组末尾添加域名
-          # 查找数组的结束行
-          if grep -q "whitelistedDomains: \[" "$FILE"; then
-            # 使用 awk 找到数组结束位置
-            awk -v domain="'$DOMAIN'" '
-            /whitelistedDomains: \[/ {
-              print $0
-              in_array = 1
-              next
-            }
-            in_array && /\]/ && !added {
-              print "    " domain ","
-              print $0
-              added = 1
-              in_array = 0
-              next
-            }
-            { print $0 }
-            ' "$FILE" > "${FILE}.tmp" && mv "${FILE}.tmp" "$FILE"
-            
-            echo "✓ Added domain to whitelist in $FILE"
-            echo "Updated whitelist:"
-            grep -A 10 "whitelistedDomains:" "$FILE"
-          else
-            echo "❌ Could not find whitelistedDomains array"
-            exit 1
-          fi
-
-      - name: 4. Show all changes
-        run: |
-          echo "=== Modified files ==="
-          git status --porcelain
+          echo "=== 修改结果 ==="
           echo ""
-          echo "=== Changes summary ==="
-          git diff --name-only
-          echo ""
-          echo "=== Detailed changes ==="
-          git diff --no-ext-diff --color=always | head -100
-
-      - name: 5. Commit and push changes
-        run: |
-          # 检查是否有修改
-          if git diff --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
           
-          # 添加修改的文件
+          echo "1. Utils.ts 修改:"
+          grep -n "zws.*_" src/lib/gramjs/Utils.ts
+          
+          echo ""
+          echo "2. 白名单修改:"
+          grep -n "${{ inputs.new_domain }}" src/limits.ts || echo "域名已存在"
+          
+      - name: 5. 提交并推送
+        run: |
           git add src/
           
-          # 提交
-          git commit -m "${{ inputs.commit_message }}"
+          if git diff --cached --quiet; then
+            echo "⚠ 没有修改，跳过提交"
+            exit 0
+          fi
           
-          # 推送到当前分支
-          git push origin HEAD
+          git commit -m "chore: update web.telegram.org to ${{ inputs.new_domain }}"
+          git push
           
-          echo "✅ Successfully updated domains to ${{ inputs.custom_domain }}"
-          echo "🔗 Files modified:"
-          git diff --name-only HEAD~1
+          echo "✅ 已推送到当前分支"
