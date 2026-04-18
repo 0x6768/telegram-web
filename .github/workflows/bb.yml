@@ -43,15 +43,28 @@ jobs:
       - name: Build
         run: npm run build:production
         
-      - name: Create release with gh
-        run: |
-          # 生成 tag
-          TAG="build-$(date +%Y%m%d-%H%M%S)"
-          
-          # 用 gh 创建 release
-          gh release create $TAG \
-            --title "Telegram Web $TAG" \
-            --notes "Built on $(date)" \
-            dist/*
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: "build-$(date +%Y%m%d-%H%M%S)"
+          release_name: "Build $(date +'%Y-%m-%d %H:%M')"
+          body: |
+            Automated build
+            - SHA: ${{ github.sha }}
+            - Time: $(date)
+          draft: false
+          prerelease: false
+          generate_release_notes: true  # 自动生成 release notes
+      
+      - name: Upload Assets
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/
+          asset_name: build-${{ github.sha }}.zip
+          asset_content_type: application/zip
