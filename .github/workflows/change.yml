@@ -15,7 +15,7 @@ on:
       target_branch:
         description: 'Target branch for PR'
         required: true
-        default: 'main'
+        default: 'master'
         type: string
 
 permissions:
@@ -29,7 +29,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           ref: ${{ inputs.target_branch }}
 
       - name: Setup tools
