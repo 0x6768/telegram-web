@@ -1,9 +1,9 @@
-name: Quick Domain Replace
+name: Fix Template String Domains
 on:
   workflow_dispatch:
     inputs:
       domain:
-        description: 'Your domain'
+        description: 'Your domain (e.g., tg.example.com)'
         required: true
         type: string
 
@@ -11,33 +11,36 @@ permissions:
   contents: write
 
 jobs:
-  replace:
+  fix:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Replace domains
+      
+      - name: Process template strings
         run: |
           DOMAIN="${{ inputs.domain }}"
+          FILE="src/lib/gramjs/Utils.ts"
           
-          # 设置 Git
+          echo "Processing template strings in $FILE..."
+          
+          # 处理 zws1.web.telegram.org → zws1_$DOMAIN
+          sed -i "s|zws\([0-9]\)\.web\.telegram\.org|zws\1_$DOMAIN|g" "$FILE"
+          
+          # 处理 zws1-1.web.telegram.org → zws1-1_$DOMAIN
+          sed -i "s|zws\([0-9]\)-1\.web\.telegram\.org|zws\1-1_$DOMAIN|g" "$FILE"
+          
+          # 处理 zwsX${downloadDC ? '-1' : ''}.web.telegram.org
+          # 这个需要更复杂的处理
+          sed -i "s|\`zws\([0-9]\)\${downloadDC ? '-1' : ''}\.web\.telegram\.org\`|\`zws\1\${downloadDC ? '-1' : ''}_$DOMAIN\`|g" "$FILE"
+          
+          echo "Done!"
+          echo "Result preview:"
+          grep -n "zws" "$FILE" | head -10
+          
+      - name: Commit and push
+        run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
-          
-          # 1. 更新 Utils.ts
-          sed -i "s/web\.telegram\.org/$DOMAIN/g" src/lib/gramjs/Utils.ts
-          
-          # 2. 更新 config.ts（如果存在）
-          [ -f src/config.ts ] && sed -i "s/web\.telegram\.org/$DOMAIN/g" src/config.ts
-          [ -f src/config.ts ] && sed -i "s/telegram\.org/$DOMAIN/g" src/config.ts
-          
-          # 3. 添加域名到白名单
-          sed -i "/whitelistedDomains: \[/a\    \"$DOMAIN\"," src/limits.ts
-          
-      - name: Push changes
-        run: |
-          git add src/
-          git commit -m "Update domain to ${{ inputs.domain }}" || echo "No changes"
+          git add src/lib/gramjs/Utils.ts
+          git commit -m "Fix template string domains" || echo "No changes"
           git push
