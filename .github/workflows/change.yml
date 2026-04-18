@@ -1,8 +1,8 @@
-name: Update Web Telegram Domain
+name: Update Telegram Domain
 on:
   workflow_dispatch:
     inputs:
-      new_domain:
+      domain:
         description: '新域名 (替换 web.telegram.org)'
         required: true
         type: string
@@ -14,83 +14,28 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        
-      - name: Configure Git
+      - uses: actions/checkout@v4
+      
+      - name: Update files
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          # 1. 修改 Utils.ts
+          sed -i "s|zws\([0-9]\)\(-1\)\{0,1\}\.web\.telegram\.org|zws\1\2_${{ inputs.domain }}|g" src/lib/gramjs/Utils.ts
           
-      - name: 1. 修改 src/lib/gramjs/Utils.ts
+          # 2. 添加白名单
+          awk -v domain="\"${{ inputs.domain }}\"," '
+          /whitelistedDomains: \[/ {in_array=1}
+          in_array && /\]/ && !added {print "    " domain; added=1}
+          {print $0}
+          ' src/limits.ts > tmp && mv tmp src/limits.ts
+          
+          # 3. 修改 config.ts
+          [ -f src/config.ts ] && sed -i "s|web\.telegram\.org|${{ inputs.domain }}|g" src/config.ts
+          
+      - name: Commit and push
         run: |
-          NEW_DOMAIN="${{ inputs.new_domain }}"
-          
-          echo "正在修改 Utils.ts..."
-          echo "web.telegram.org → $NEW_DOMAIN"
-          
-          # 直接修改，不需要备份
-          sed -i "s|zws\([0-9]\)\(-1\)\{0,1\}\.web\.telegram\.org|zws\1\2_$NEW_DOMAIN|g" src/lib/gramjs/Utils.ts
-          
-          echo "✅ 修改完成"
-          
-      - name: 2. 在 src/limits.ts 中添加白名单
-        run: |
-          NEW_DOMAIN="${{ inputs.new_domain }}"
-          
-          echo "正在添加 $NEW_DOMAIN 到白名单..."
-          
-          # 在 whitelistedDomains 数组末尾添加
-          awk -v domain="\"$NEW_DOMAIN\"," '
-          /whitelistedDomains: \[/ {
-            print $0
-            in_array = 1
-            next
-          }
-          in_array && /\]/ && !added {
-            print "    " domain
-            print $0
-            added = 1
-            in_array = 0
-            next
-          }
-          { print $0 }
-          ' src/limits.ts > tmp_file && mv tmp_file src/limits.ts
-          
-          echo "✅ 已添加到白名单"
-          
-      - name: 3. 修改 src/config.ts (如果存在)
-        run: |
-          if [ ! -f "src/config.ts" ]; then
-            echo "⚠ config.ts 不存在，跳过"
-            exit 0
-          fi
-          
-          sed -i "s|web\.telegram\.org|${{ inputs.new_domain }}|g" src/config.ts
-          echo "✅ 已修改 config.ts"
-          
-      - name: 4. 显示修改摘要
-        run: |
-          echo "=== 修改结果 ==="
-          echo ""
-          
-          echo "1. Utils.ts 修改:"
-          grep -n "zws.*_" src/lib/gramjs/Utils.ts
-          
-          echo ""
-          echo "2. 白名单修改:"
-          grep -n "${{ inputs.new_domain }}" src/limits.ts || echo "域名已存在"
-          
-      - name: 5. 提交并推送
-        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
           git add src/
-          
-          if git diff --cached --quiet; then
-            echo "⚠ 没有修改，跳过提交"
-            exit 0
-          fi
-          
-          git commit -m "chore: update web.telegram.org to ${{ inputs.new_domain }}"
+          # 有修改就提交，没修改就跳过
+          git diff --cached --quiet || git commit -m "update domain to ${{ inputs.domain }}"
           git push
-          
-          echo "✅ 已推送到当前分支"
