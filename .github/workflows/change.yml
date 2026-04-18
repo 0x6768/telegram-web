@@ -12,15 +12,6 @@ on:
         required: true
         default: 'chore: update domain configurations'
         type: string
-      pr_body:
-        description: 'Pull Request description'
-        required: true
-        default: |
-          Automated domain configuration update:
-          1. Added custom domain to whitelist in `src/limits.ts`
-          2. Updated DC server addresses in `src/lib/gramjs/Utils.ts`
-          3. Updated related domain configurations in `src/config.ts`
-        type: string
       target_branch:
         description: 'Target branch for PR'
         required: true
@@ -41,10 +32,11 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.target_branch }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Setup tools
+        run: |
+          # 确保 sed 可用
+          command -v sed
+          echo "Tools ready"
 
       - name: 1. Update src/limits.ts - Add to whitelist
         run: |
@@ -58,51 +50,35 @@ jobs:
           
           echo "Updating whitelistedDomains in $FILE..."
           
-          # Create a backup
-          cp "$FILE" "$FILE.bak"
+          # 备份文件
+          cp "$FILE" "${FILE}.backup"
           
-          # Use sed to add domain to whitelistedDomains array
-          # Find the whitelistedDomains array and add domain before closing bracket
-          sed -i "/whitelistedDomains: \[/,/\]/ {
-            /\]/i\
-\ \ \ \ '$DOMAIN',
-          }" "$FILE"
-          
-          # Verify the change
-          if grep -q "'$DOMAIN'" "$FILE"; then
-            echo "✓ Successfully added domain to whitelist in $FILE"
-            echo "Updated whitelistedDomains array:"
-            grep -A 15 "whitelistedDomains: \[" "$FILE" | head -20
-          else
-            echo "⚠ Failed to add domain. Trying alternative method..."
-            # Alternative method using awk
-            awk -v domain="'$DOMAIN'" '
-            /whitelistedDomains: \[/ {
-              print $0
-              in_array = 1
-              next
-            }
-            in_array && /\]/ && !added {
-              print "    " domain ","
-              print $0
-              added = 1
-              in_array = 0
-              next
-            }
-            in_array {
-              print $0
-              next
-            }
-            { print $0 }
-            ' "$FILE.bak" > "$FILE"
-            
-            if grep -q "'$DOMAIN'" "$FILE"; then
-              echo "✓ Successfully added domain using alternative method"
-            else
-              echo "❌ Failed to add domain. Please check file format."
-              exit 1
+          # 简化方法：直接在数组末尾前添加新域名
+          # 使用更简单的 sed 命令
+          if grep -q "whitelistedDomains: \[" "$FILE"; then
+            # 找到 whitelistedDomains 数组的结束位置
+            LINE_NUM=$(grep -n "whitelistedDomains: \[" "$FILE" | cut -d: -f1)
+            if [ -n "$LINE_NUM" ]; then
+              # 找到数组结束的 ] 行
+              ARRAY_END=$(awk -v start="$LINE_NUM" 'NR >= start && /\]/ {print NR; exit}' "$FILE")
+              if [ -n "$ARRAY_END" ]; then
+                # 在数组结束前插入新域名
+                sed -i "${ARRAY_END}i\\    \"$DOMAIN\"," "$FILE"
+                echo "✓ Added domain to whitelist"
+              else
+                echo "⚠ Could not find end of array, using alternative method"
+                # 备用方法：直接在文件末尾的数组前添加
+                sed -i '/whitelistedDomains: \[/a\    "'"$DOMAIN"'",' "$FILE"
+              fi
             fi
+          else
+            echo "❌ Could not find whitelistedDomains array"
+            exit 1
           fi
+          
+          # 验证更改
+          echo "Updated whitelist preview:"
+          grep -A5 -B5 "whitelistedDomains" "$FILE" | head -15
 
       - name: 2. Update src/lib/gramjs/Utils.ts - Replace DC servers
         run: |
@@ -116,15 +92,12 @@ jobs:
           
           echo "Updating DC server domains in $FILE..."
           
-          # Backup original file
-          cp "$FILE" "$FILE.backup"
+          # 使用简单的 sed 替换
+          sed -i "s|web\\.telegram\\.org|$DOMAIN|g" "$FILE"
           
-          # Replace all occurrences of web.telegram.org with custom domain
-          sed -i "s/web\.telegram\.org/$DOMAIN/g" "$FILE"
-          
-          echo "✓ Updated DC server domains in $FILE"
+          echo "✓ Updated DC server domains"
           echo "Sample changes:"
-          grep -n "zws.*\." "$FILE" | head -10 || true
+          grep -n "zws" "$FILE" | head -5
 
       - name: 3. Update src/config.ts - Replace related domains
         run: |
@@ -138,89 +111,31 @@ jobs:
           
           echo "Updating domains in $FILE..."
           
-          # Create backup
-          cp "$FILE" "$FILE.backup"
+          # 替换各种域名
+          sed -i "s|web\\.telegram\\.org|$DOMAIN|g" "$FILE"
+          sed -i "s|telegram\\.org|$DOMAIN|g" "$FILE"
+          sed -i "s|telegram\\.dog|$DOMAIN|g" "$FILE"
+          sed -i "s|telegram\\.me|$DOMAIN|g" "$FILE"
+          sed -i "s|t\\.me|$DOMAIN|g" "$FILE"
           
-          # Replace various Telegram domains
-          sed -i "s/web\.telegram\.org/$DOMAIN/g" "$FILE"
-          sed -i "s/telegram\.org/$DOMAIN/g" "$FILE"
-          sed -i "s/telegram\.dog/$DOMAIN/g" "$FILE"
-          sed -i "s/telegram\.me/$DOMAIN/g" "$FILE"
-          sed -i "s/t\.me/$DOMAIN/g" "$FILE"
-          
-          echo "✓ Updated domain configurations in $FILE"
-          echo "Changes preview:"
-          grep -n "\.org\|\.me\|\.dog\|$DOMAIN" "$FILE" | head -10 || true
+          echo "✓ Updated domain configurations"
 
-      - name: 4. Run TypeScript validation (optional)
-        run: |
-          if [ -f "package.json" ]; then
-            echo "Checking for TypeScript..."
-            if grep -q "typescript" package.json; then
-              echo "Running TypeScript compiler check..."
-              npx tsc --noEmit || echo "TypeScript check completed (warnings are OK)"
-            else
-              echo "TypeScript not found in package.json, skipping"
-            fi
-          else
-            echo "package.json not found, skipping TypeScript check"
-          fi
-
-      - name: 5. Verify changes
+      - name: 4. Verify changes
         run: |
           echo "=== Change Summary ==="
+          git diff --name-only
           echo ""
-          
-          echo "1. Modified files:"
-          git status --porcelain | grep -E "^ M|^A" || echo "No changes detected"
-          
-          echo ""
-          echo "2. src/limits.ts whitelist update:"
-          if [ -f "src/limits.ts" ]; then
-            grep -A 10 "whitelistedDomains:" src/limits.ts || true
-          fi
-          
-          echo ""
-          echo "3. src/lib/gramjs/Utils.ts DC server update:"
-          if [ -f "src/lib/gramjs/Utils.ts" ]; then
-            grep -n "zws[0-9]" src/lib/gramjs/Utils.ts | head -5 || true
-          fi
-          
-          echo ""
-          echo "4. src/config.ts domain updates:"
-          if [ -f "src/config.ts" ]; then
-            grep -n "${{ inputs.custom_domain }}" src/config.ts | head -5 || true
-          fi
+          echo "Modified files:"
+          git status --porcelain
 
-      - name: 6. Create Pull Request
+      - name: 5. Create Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: update domain configuration to ${{ inputs.custom_domain }}"
           title: "${{ inputs.pr_title }}"
-          body: |
-            ${{ inputs.pr_body }}
-            
-            ### Changes made:
-            - ✅ Added `${{ inputs.custom_domain }}` to whitelisted domains in `src/limits.ts`
-            - ✅ Updated DC server addresses in `src/lib/gramjs/Utils.ts`
-            - ✅ Updated domain configurations in `src/config.ts`
-            
-            ### Verification:
-            - [ ] Check that the domain is correctly added to whitelist
-            - [ ] Verify DC server addresses are updated
-            - [ ] Test with the new domain configuration
-          branch: "update-domain-${{ github.run_id }}-${{ github.run_attempt }}"
+          body: "Automated update: Added ${{ inputs.custom_domain }} to domain configurations"
+          branch: "update-domain-${{ github.run_id }}"
           base: "${{ inputs.target_branch }}"
           delete-branch: true
-          labels: |
-            automated
-            configuration
-            domain-update
-          assignees: ""
-          reviewers: ""
-          draft: false
-          add-paths: |
-            src/limits.ts
-            src/lib/gramjs/Utils.ts
-            src/config.ts
+          labels: automated
