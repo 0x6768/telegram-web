@@ -3,16 +3,16 @@ name: Build Telegram Web
 on:
   workflow_dispatch:
     inputs:
-      telegram_api_id:
-        description: 'TELEGRAM_API_ID'
+      api_id:
+        description: 'API ID'
         required: true
         type: string
-      telegram_api_hash:
-        description: 'TELEGRAM_API_HASH'
+      api_hash:
+        description: 'API Hash'
         required: true
         type: string
-      base_url:
-        description: 'BASE_URL'
+      domain:
+        description: 'Domain'
         required: true
         type: string
 
@@ -24,40 +24,34 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       
-      # 使用正确的 Node.js 版本
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      
-      # 清理有问题的 NODE_OPTIONS
-      - name: Clean environment
-        run: |
-          unset NODE_OPTIONS
-          echo "NODE_OPTIONS cleared"
+          node-version: '20'
           
       - name: Install dependencies
-        run: |
-          # 使用 --legacy-peer-deps 忽略 peer dependency 警告
-          npm ci --legacy-peer-deps
+        run: npm ci --silent
         
-      - name: Create env file
+      - name: Create config
         run: |
-          echo "TELEGRAM_API_ID=${{ inputs.telegram_api_id }}" > .env
-          echo "TELEGRAM_API_HASH=${{ inputs.telegram_api_hash }}" >> .env
-          echo "BASE_URL=${{ inputs.base_url }}" >> .env
-      
+          echo "TELEGRAM_API_ID=${{ github.event.inputs.api_id }}" > .env
+          echo "TELEGRAM_API_HASH=${{ github.event.inputs.api_hash }}" >> .env
+          echo "BASE_URL=${{ github.event.inputs.domain }}" >> .env
+          
       - name: Build
         run: npm run build:production
         
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: "build-$(date +%s)"
-          name: "Build $(date '+%Y-%m-%d')"
-          files: dist/**
+      - name: Create release with gh
+        run: |
+          # 生成 tag
+          TAG="build-$(date +%Y%m%d-%H%M%S)"
+          
+          # 用 gh 创建 release
+          gh release create $TAG \
+            --title "Telegram Web $TAG" \
+            --notes "Built on $(date)" \
+            dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
