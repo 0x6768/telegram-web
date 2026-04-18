@@ -1,9 +1,9 @@
-name: Update Telegram Domain
+name: Update Telegram Domains
 on:
   workflow_dispatch:
     inputs:
       domain:
-        description: '新域名'
+        description: '替换 web.telegram.org 的新域名'
         required: true
         type: string
 
@@ -16,21 +16,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Replace domain in Utils.ts
+      - name: 1. 修改 src/lib/gramjs/Utils.ts
         run: |
           DOMAIN="${{ inputs.domain }}"
           FILE="src/lib/gramjs/Utils.ts"
           
-          # 正确的正则：匹配整个模板字符串
-          # 注意：需要转义 $ 和 {
-          sed -i "s|\`zws\([0-9]\)\${downloadDC ? '-1' : ''}\.web\.telegram\.org\`|\`zws\1\${downloadDC ? '-1' : ''}_$DOMAIN\`|g" "$FILE"
+          echo "正在修改 Utils.ts..."
           
-          echo "✅ 已更新模板字符串"
+          # 替换 1-5 的所有 DC
+          for i in 1 2 3 4 5; do
+            sed -i "s|\`zws${i}\${downloadDC ? '-1' : ''}\.web\.telegram\.org\`|\`zws${i}\${downloadDC ? '-1' : ''}_$DOMAIN\`|g" "$FILE"
+          done
           
-      - name: Add to whitelist
+          echo "✅ Utils.ts 修改完成"
+          
+      - name: 2. 修改 src/config.ts
+        run: |
+          DOMAIN="${{ inputs.domain }}"
+          FILE="src/config.ts"
+          
+          if [ ! -f "$FILE" ]; then
+            echo "⚠ config.ts 不存在，跳过"
+            exit 0
+          fi
+          
+          echo "正在修改 config.ts..."
+          
+          # 只替换 web.telegram.org
+          sed -i "s|web\.telegram\.org|$DOMAIN|g" "$FILE"
+          
+          echo "✅ config.ts 修改完成"
+          
+      - name: 3. 在 src/limits.ts 中添加白名单
         run: |
           DOMAIN="${{ inputs.domain }}"
           FILE="src/limits.ts"
+          
+          echo "正在添加域名到白名单..."
           
           # 在 whitelistedDomains 数组中添加
           awk -v domain="\"$DOMAIN\"," '
@@ -39,10 +61,12 @@ jobs:
           {print $0}
           ' "$FILE" > tmp && mv tmp "$FILE"
           
-      - name: Commit and push
+          echo "✅ 已添加到白名单"
+          
+      - name: 4. 提交并推送
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add src/
-          git commit -m "update domain to ${{ inputs.domain }}" 2>/dev/null || true
+          git commit -m "update: replace web.telegram.org with ${{ inputs.domain }}" 2>/dev/null || true
           git push
